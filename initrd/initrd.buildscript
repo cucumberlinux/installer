@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# Copyright 2017, 2018 Scott Court
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Cucumber Linux Buildscript for the installer initrd
+
+# The directory containing the binary packages.
+PKGDIR=${PKGDIR:-/opt/packages}
+
+# The packages to install to the initrd (in addition to busybox).
+# TODO switch to the following package selection once all of the packages have
+# been added to the ports tree
+#INSTALLER_PACKAGES=(bash btrfs curl dialog e2fsprogs eudev fuse glibc gptfdisk kmod libcap linux ncurses ntfs pickle pkgtools readline sysvinit tar util xz zlib)
+INSTALLER_PACKAGES=(bash curl dialog e2fsprogs eudev glibc kmod libcap linux ncurses pickle pkgtools readline sysvinit tar util-linux xz zlib)
+
+# Finds the .txz file for the package $1 in the $PKGDIR directory.
+find_pkg () {
+	find $PKGDIR | egrep "/$1-[^-]+-[^-]+-[^-]+.txz\$" | tail -n1
+}
+
+NAME=initrd
+BUSYBOX_VERSION=${BUSYBOX_VERSION:-$(echo busybox-*.tar.bz2 | rev | cut -f 3- -d . | cut -f 1 -d - | rev)}
+
+# Determine the architecture we are building on if it is not explicitly
+# specified.
+if [ -z "$CUCARCH" ]; then
+	case "$(uname -m)" in
+	# For the x86 series, force i686
+	i?86)
+		export CUCARCH="i686"
+		LIBDIRSUFFIX=""
+		;;
+	# For x86_64, set the libdir suffix to 64 (so we use /lib64 instead of
+	# /lib)
+	x86_64)
+		export CUCARCH="x86_64"
+		LIBDIRSUFFIX="64"
+		;;
+	# Use "uname -m" for all other architectures
+	*)
+		export CUCARCH=$(uname -m)
+		LIBDIRSUFFIX=""
+	esac
+fi
+
+PACKAGE=$NAME-$CUCARCH
+BUILDDIR=${BUILDDIR:-/tmp/$PACKAGE}
+OUTDIR=${OUTDIR:-/tmp}
+DESTDIR=$BUILDDIR/staging
+
+# Save the Original Working Directory
+OWD=$(pwd)
+
+# If the build directory already exists, remove it so we have a fresh start
+if [ -e $BUILDDIR ]; then
+	rm $BUILDDIR -rf
+fi
+
+# Make a temporary directory to build/stage in
+mkdir $BUILDDIR/{staging,src,scrap_root} -pv
+cd $BUILDDIR/src
+
+# Make a filesystem shell
+mkdir -pv $DESTDIR/{bin,dev,etc,lib,media,mnt,opt,proc,root,run,sbin,sys,tmp,usr,var}
+
+##### Build Busybox #####
+tar -xf "$OWD/busybox-$BUSYBOX_VERSION.tar.bz2" || exit 1
+cd busybox* || exit 1
+cp $OWD/busybox.config .config || exit 1
+make -j $(nproc) || make || exit 1
+make CONFIG_PREFIX=$DESTDIR install || exit 1
+
+##### Install Other Packages #####
+for pkg in ${INSTALLER_PACKAGES[*]}; do
+	pkgfile=$(find_pkg $pkg)
+	if [ -z "$pkgfile" ]; then
+		echo "Error: no package archive exists for $pkg under the $PKGDIR heirarchy"
+		exit 1
+	fi
+	installpkg --root $DESTDIR "$pkgfile" || exit 1
+done
+
+##### Install the Partial Packages #####
+# Install gcc dependencies for the gptfdisk package
+pkgfile=$(find_pkg gcc)
+installpkg --root $BUILDDIR/scrap_root "$pkgfile" || exit 1
+for file in libstdc++.so libgcc_s.so; do
+	cp -v $BUILDDIR/scrap_root/usr/lib${LIBDIRSUFFIX}/${file}* $DESTDIR/usr/lib${LIBDIRSUFFIX}/ || exit 1
+done
+# Install libressl dependencies for the curl package
+pkgfile=$(find_pkg libressl)
+installpkg --root $BUILDDIR/scrap_root "$pkgfile" || exit 1
+for file in libssl.so libcrypto.so; do
+	cp -v $BUILDDIR/scrap_root/usr/lib${LIBDIRSUFFIX}/${file}* $DESTDIR/usr/lib${LIBDIRSUFFIX}/ || exit 1
+done
+
+##### Set up the target filesystem #####
+mkdir -pv $DESTDIR/{dev,sys,proc}
+
+# Eudev likes to misplace this library in /lib on x86_64
+if [ "$CUCARCH" = "x86_64" ]; then
+	mv $DESTDIR/lib/libudev.so* $DESTDIR/lib64/
+fi
+
+# Install the init script
+install -m 755 $OWD/init $DESTDIR/
+
+# Install the inittab
+cp $OWD/inittab $DESTDIR/etc/
+
+# Make a passwd and shadow
+echo "root:x:0:0:root:/:/bin/bash" > $DESTDIR/etc/passwd
+echo "root::0:0:99999:7:::" > $DESTDIR/etc/shadow
+
+# Cleanup some extra files to save space
+rm -rf $DESTDIR/usr/{man,info,include}
+rm -rf $DESTDIR/usr/share/{doc,info,man,locale,i18n}
+rm -rf $DESTDIR/boot
+rm -rf $DESTDIR/usr/lib$LIBDIRSUFFIX/{locale,gconv}
+rm -rf $DESTDIR/usr/lib$LIBDIRSUFFIX/*.a
+
+# Install the profile
+install -m 755 $OWD/mount_installer $DESTDIR/sbin/
+
+##### Compress the initrd #####
+cd $DESTDIR
+find . | cpio -H newc -ov | gzip -9 > $OUTDIR/$PACKAGE.cpio
+echo "$PACKAGE was successfully built to:"
+echo "$OUTDIR/$PACKAGE.cpio"
+

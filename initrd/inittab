@@ -1,0 +1,38 @@
+# Cucumber Linux Installer Inittab
+#
+# Version:	1.0	2017-04-21
+#
+# Written by Scott Court (Z5T1@Z5T1.com)
+
+
+# The default runlevel for your system. The following values are permitted:
+# 0   Shutdown
+# 1   Single User Mode
+# 2   Multiuser without Networking
+# 3   Multiuser with Networking (Default)
+# 4   Same as runlevel 3
+# 5   Graphical login
+# 6   Reboot
+# Do NOT set this to 0 or 6.
+id:3:initdefault:
+
+# Handle the "three finger salute"
+ca:12345:ctrlaltdel:/sbin/reboot -p
+
+# Respawn terminals
+1:2345:respawn:/sbin/agetty --autologin root --login-program /sbin/mount_installer --noclear tty1 9600
+2:2345:respawn:/sbin/agetty tty2 9600
+3:2345:respawn:/sbin/agetty tty3 9600
+4:2345:respawn:/sbin/agetty tty4 9600
+5:2345:respawn:/sbin/agetty tty5 9600
+6:2345:respawn:/sbin/agetty tty6 9600
+S0:2345:respawn:/sbin/agetty --autologin root --login-program /sbin/mount_installer --noclear -L ttyS0 9600 vt100
+S1:2345:respawn:/sbin/agetty -L ttyS1 9600 vt100
+S2:2345:respawn:/sbin/agetty -L ttyS2 9600 vt100
+S3:2345:respawn:/sbin/agetty -L ttyS3 9600 vt100
+
+# Shutdown and reboot stuff
+hr0:06:wait:/bin/umount -a -r
+hr1:06:wait:/sbin/swapoff -a
+h1:0:wait:/sbin/halt -fp
+r1:6:wait:/sbin/reboot -fp

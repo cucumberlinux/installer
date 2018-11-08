@@ -1,0 +1,45 @@
+#!/bin/sh
+
+########## Mount the System Pseudofilesystems ##########
+mount -n -t devtmpfs devtmpfs /dev
+mount -n -t proc proc /proc
+mount -n -t sysfs sysfs /sys
+mount -n -t tmpfs tmpfs /run
+
+########## Udev ##########
+echo Starting Udev
+# Start the udev daemon to continually watch for, and act on,
+# uevents
+/sbin/udevd --daemon
+
+# Now traverse /sys in order to "coldplug" devices that have
+# already been discovered
+/sbin/udevadm trigger --action=add    --type=subsystems
+/sbin/udevadm trigger --action=add    --type=devices
+/sbin/udevadm trigger --action=change --type=devices
+
+# Now wait for udevd to process the uevents we triggered
+if ! is_true "$OMIT_UDEV_SETTLE"; then
+ /sbin/udevadm settle
+fi
+
+# If any LVM based partitions are on the system, ensure they
+# are activated so they can be used.
+if [ -x /sbin/vgchange ]; then /sbin/vgchange -a y >/dev/null; fi
+
+########## Hostname ##########
+hostname "Cucumber Linux Installer"
+
+########## Mount and Remount some stuff ##########
+mkdir -p /dev/{pts,shm}
+mount -a
+
+########## Misc ##########
+dmesg -D
+
+########## Hand off control to Sysvinit ##########
+exec 0</dev/console
+exec 1>/dev/console
+exec 2>/dev/console
+exec /sbin/init $*
+

@@ -1,0 +1,33 @@
+#!/bin/sh
+
+# Attempt to mount and run the installer
+if [ ! -e /media/install/.cucumber_installer_stamp ]
+then
+	mkdir -p /media/install
+	
+	for drive in $(lsblk -lno NAME)
+	do
+		mount /dev/$drive /media/install
+		if [ -e /media/install/.cucumber_installer_stamp ]
+		then
+			break
+		fi
+		umount /media/install
+	done
+fi
+
+if [ -e /media/install/.cucumber_installer_stamp ]; then
+	/media/install/install.sh
+else
+	clear
+	echo
+	echo "    Zzzzz  |\\      _,,,--,,_        "
+	echo "           /,\`.-'\`'   ._  \\-;;,_    "
+	echo "          |,4-  ) )_   .;.(  \`'-'   "
+	echo "         '---''(_/._)-'(_\\_)        "
+	echo
+	echo "Oh noes! We couldn't find the installation medium. Please mount it under"
+	echo "/media/install and then run /media/install/install.sh to install"
+	echo "Cucumber Linux."
+	exec /bin/bash
+fi
