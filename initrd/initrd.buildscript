@@ -62,7 +62,7 @@ if [ -z "$CUCARCH" ]; then
 fi
 
 PACKAGE=$NAME-$CUCARCH
-BUILDDIR=${BUILDDIR:-/tmp/$PACKAGE}
+BUILDDIR=${BUILDDIR:-/tmp/$PACKAGE-builddir}
 OUTDIR=${OUTDIR:-/tmp}
 DESTDIR=$BUILDDIR/staging
 
@@ -142,7 +142,7 @@ install -m 755 $OWD/mount_installer $DESTDIR/sbin/
 
 ##### Compress the initrd #####
 cd $DESTDIR
-find . | cpio -H newc -ov | gzip -9 > $OUTDIR/$PACKAGE.cpio
+find . | cpio -H newc -ov | gzip -9 > $OUTDIR/$PACKAGE
 echo "$PACKAGE was successfully built to:"
-echo "$OUTDIR/$PACKAGE.cpio"
+echo "$OUTDIR/$PACKAGE"
 
