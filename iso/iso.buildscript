@@ -41,7 +41,7 @@ isolinux_mkiso () {
 			-no-emul-boot \
 			-isohybrid-gpt-basdat \
 		-volid "CUCUMBER" \
-		-output /tmp/cucumber-linux-$2.iso \
+		-output $OUTDIR/cucumber-linux-$2.iso \
 		$1 || return 1
 }
 
@@ -52,7 +52,8 @@ build_iso () {
 	# Make the directories
 	mkdir -pv $DESTDIR/$ARCH
 
-	# Add the installer stamp file so autodetection can find the installation medium.
+	# Add the installer stamp file so autodetection can find the
+	# installation medium.
 	touch $DESTDIR/$ARCH/.cucumber_installer_stamp
 	touch $DESTDIR/$ARCH/.cucumber_installer_edition_full
 
@@ -78,7 +79,8 @@ build_iso () {
 	mkdir $DESTDIR/$ARCH/boot/grub/$GRUB_ARCH-efi || exit 1
 	cp /usr/lib${LIBDIRSUFFIX}/grub/$GRUB_ARCH-efi/*.mod $DESTDIR/$ARCH/boot/grub/$GRUB_ARCH-efi/ || exit 1
 	# Make the efi.img
-	# Based on the article at https://forums.solydxk.com/viewtopic.php?t=6399
+	# Based on the article at
+	# https://forums.solydxk.com/viewtopic.php?t=6399
 	# Make the 32 bit efi executable only for the 32 bit installer.
 	if [ $GRUB_ARCH = 'i386' ]; then
 		grub-mkimage --prefix '' --config "$OWD/grub/embedded.cfg" -O i386-efi -o "$DESTDIR/$ARCH/EFI/BOOT/bootia32.efi" part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 normal chain boot configfile linux multiboot iso9660 gfxmenu gfxterm loadenv efi_gop efi_uga loadbios fixvideo png ext2 ntfscomp loopback search minicmd cat cpuid appleldr elf usb videotest halt help ls reboot echo test normal sleep memdisk tar font video_fb video gettext true  video_bochs video_cirrus multiboot2 acpi || exit 1
