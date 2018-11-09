@@ -1,0 +1,171 @@
+#!/bin/bash
+
+# Copyright 2017, 2018 Scott Court
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Cucumber Linux Buildscript for the installer ISOs
+
+# Creates an isolinux bootable ISO. $1 should specify the root directory of the
+# ISO, and $2 should be the label for the ISO (i.e. $VERSION-$ARCH-$EDITION).
+isolinux_mkiso () {
+	xorriso -as mkisofs \
+		-iso-level 3 \
+		-full-iso9660-filenames \
+		-R -J -A "Cucumber Linux $2" \
+		-hide-rr-moved \
+		-v -d -N \
+		-b boot/isolinux/isolinux.bin \
+		-c boot/isolinux/boot.cat \
+			-no-emul-boot -boot-load-size 4 -boot-info-table \
+			-no-emul-boot -isohybrid-gpt-basdat \
+			-isohybrid-mbr $BUILDDIR/syslinux/syslinux-*/bios/mbr/isohdpfx.bin \
+		-eltorito-alt-boot \
+		-e boot/grub/efi.img \
+			-no-emul-boot \
+			-isohybrid-gpt-basdat \
+		-volid "CUCUMBER" \
+		-output /tmp/cucumber-linux-$2.iso \
+		$1 || return 1
+}
+
+# Builds the ISO for the architecture specified by $1
+build_iso () {
+	ARCH=$1
+
+	# Make the directories
+	mkdir -pv $DESTDIR/$ARCH
+
+	# Add the installer stamp file so autodetection can find the installation medium.
+	touch $DESTDIR/$ARCH/.cucumber_installer_stamp
+	touch $DESTDIR/$ARCH/.cucumber_installer_edition_full
+
+	# Install the install.sh and upgrade.sh
+	install $OWD/install.sh $DESTDIR/$ARCH/
+	install $OWD/upgrade.sh $DESTDIR/$ARCH/
+
+	# Install the isolinux bootloader
+	mkdir -pv $DESTDIR/$ARCH/boot/isolinux
+	cp $OWD/isolinux/isolinux.cfg $DESTDIR/$ARCH/boot/isolinux/ || exit 1
+	cp $OWD/isolinux/boot.txt $DESTDIR/$ARCH/boot/isolinux/ || exit 1
+	cp $BUILDDIR/syslinux/syslinux-*/bios/core/isolinux.bin $DESTDIR/$ARCH/boot/isolinux/ || exit 1
+	cp $BUILDDIR/syslinux/syslinux-*/bios/com32/elflink/ldlinux/ldlinux.c32 $DESTDIR/$ARCH/boot/isolinux/ || exit 1
+
+	# Install the UEFI Grub bootloader
+	mkdir -pv $DESTDIR/$ARCH/{boot/grub,EFI/BOOT}
+	case $ARCH in
+		i686)		GRUB_ARCH=i386		;;
+		x86_64)		GRUB_ARCH=x86_64	;;
+		*)		echo "Unsupported Architecture: $ARCH"	;;
+	esac
+	cp $OWD/grub/grub.cfg $DESTDIR/$ARCH/boot/grub/ || exit 1
+	mkdir $DESTDIR/$ARCH/boot/grub/$GRUB_ARCH-efi || exit 1
+	cp /usr/lib${LIBDIRSUFFIX}/grub/$GRUB_ARCH-efi/*.mod $DESTDIR/$ARCH/boot/grub/$GRUB_ARCH-efi/ || exit 1
+	# Make the efi.img
+	# Based on the article at https://forums.solydxk.com/viewtopic.php?t=6399
+	# Make the 32 bit efi executable only for the 32 bit installer.
+	if [ $GRUB_ARCH = 'i386' ]; then
+		grub-mkimage --prefix '' --config "$OWD/grub/embedded.cfg" -O i386-efi -o "$DESTDIR/$ARCH/EFI/BOOT/bootia32.efi" part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 normal chain boot configfile linux multiboot iso9660 gfxmenu gfxterm loadenv efi_gop efi_uga loadbios fixvideo png ext2 ntfscomp loopback search minicmd cat cpuid appleldr elf usb videotest halt help ls reboot echo test normal sleep memdisk tar font video_fb video gettext true  video_bochs video_cirrus multiboot2 acpi || exit 1
+	fi
+	grub-mkimage --prefix '' --config "$OWD/grub/embedded.cfg" -O x86_64-efi -o "$DESTDIR/$ARCH/EFI/BOOT/bootx64.efi" part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 normal chain boot configfile linux multiboot iso9660 gfxmenu gfxterm loadenv efi_gop efi_uga loadbios fixvideo png ext2 ntfscomp loopback search minicmd cat cpuid appleldr elf usb videotest halt help ls reboot echo test normal sleep memdisk tar font video_fb video gettext true  video_bochs video_cirrus multiboot2 acpi || exit 1
+	mkdosfs -F12 -n "EFI_CUCUMBER" -C $DESTDIR/$ARCH/boot/grub/efi.img 2048
+	mcopy -s -i $DESTDIR/$ARCH/boot/grub/efi.img $DESTDIR/$ARCH/EFI ::
+	rm -R $DESTDIR/$ARCH/EFI
+
+	# Update the files with the right versions and arch.
+	for f in install.sh boot/isolinux/boot.txt boot/grub/grub.cfg; do
+		sed -i $DESTDIR/$ARCH/$f -e s/§VERSION§/$VERSION/g
+		sed -i $DESTDIR/$ARCH/$f -e s/§ARCH§/$ARCH/g
+	done
+
+	# Install the kernel and initrd
+	cp $OWD/initrd-$ARCH $DESTDIR/$ARCH/boot/initrd
+	if [ -e $BUILDDIR/kernel/$ARCH ]; then
+		rm -r $BUILDDIR/kernel/$ARCH
+	fi
+	mkdir -pv $BUILDDIR/kernel/$ARCH
+	local linux_pkg=$(find $PKGDIR | egrep "/linux-[^-]+-[^-]+-[^-]+.txz\$" | tail -n1)
+	installpkg --root $BUILDDIR/kernel/$ARCH $linux_pkg
+	cp $BUILDDIR/kernel/$ARCH/boot/vmlinuz $DESTDIR/$ARCH/boot/vmlinuz
+
+	# Copy the distribution files over
+	mkdir -pv $DESTDIR/$ARCH/cucumber-$ARCH/
+	cp -rv --reflink=auto $PKGDIR/cucumber/* $DESTDIR/$ARCH/cucumber-$ARCH/
+	if [ -e $PKGDIR/multilib ]; then
+		 cp -rv --reflink=auto $PKGDIR/cucumber/multilib $DESTDIR/$ARCH/cucumber-$ARCH/
+	fi
+	#cp -v $PKGDIR/{contents.bz2,file-list,updates} $DESTDIR/$ARCH/cucumber-$ARCH/
+	#cp -v $PKGDIR/CHANGELOG $DESTDIR/$ARCH/
+
+	# Generate the full ISO
+	isolinux_mkiso $DESTDIR/$ARCH $VERSION-$ARCH-full
+	echo $OUTDIR/cucumber-linux-$VERSION-$ARCH-full.iso built
+
+}
+
+NAME=Cucumber_ISOs
+VERSION=${VERSION:-SNAPSHOT-$(date +%Y-%m-%da)}
+PACKAGE=$NAME
+BUILDDIR=${BUILDDIR:-/tmp/$PACKAGE}
+DESTDIR=$BUILDDIR
+OUTDIR=${OUTDIR:-/tmp}
+PKGDIR=${PKGDIR:-/opt/packages}
+
+# Determine the architecture we are building on if it is not explicitly specified.
+if [ -z "$CUCARCH" ]; then
+        case "$(uname -m)" in
+        # For the x86 series, force i686
+        i?86)
+                export CUCARCH="i686"
+                LIBDIRSUFFIX=""
+                ;;
+        # For x86_64, set the libdir suffix to 64 (so we use /lib64 instead of /lib)
+        x86_64)
+                export CUCARCH="x86_64"
+                LIBDIRSUFFIX="64"
+                ;;
+        # Use "uname -m" for all other architectures
+        *)
+                export CUCARCH=$(uname -m)
+                LIBDIRSUFFIX=""
+        esac
+fi
+
+# Save the Original Working Directory
+OWD=$(pwd)
+
+# If the build directory already exists, remove it so we have a fresh start
+if [ -e $BUILDDIR ]; then
+	rm $BUILDDIR -rf
+fi
+
+# Make a temporary directory to build/stage in
+mkdir $BUILDDIR -pv
+cd $BUILDDIR/
+
+# Extract Syslinux
+mkdir syslinux
+cd syslinux
+tar -xJf $OWD/isolinux/syslinux-*.tar.xz
+cd ..
+
+# Make the ISOs for each architecture
+set -e
+build_iso $CUCARCH
+

@@ -1,0 +1,10 @@
+
+                          0aCucumber Linux Installer07
+
+Select an option from the menu below.
+
+  1. Install Cucumber Linux §VERSION§ §ARCH§
+  2. Boot from the primary hard drive
+  3. Boot from the next device
+
+If you do not make a selection in the next 30 seconds, option 1 will boot.
